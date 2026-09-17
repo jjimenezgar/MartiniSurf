@@ -34,7 +34,7 @@ MARTINI3_LABELS = [
 
 
 def render_surface_bead_reference() -> None:
-    """Render a compact Martini 3 bead reference next to surface bead selection."""
+    """Render a compact, native Martini 3 bead reference for the Surface step."""
     with st.expander("Martini 3 bead type reference", expanded=False):
         st.caption(
             "Use this as a quick naming guide for surface beads. The chemical class controls "
