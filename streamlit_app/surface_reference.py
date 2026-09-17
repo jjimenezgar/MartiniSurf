@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import streamlit as st
 
 
@@ -31,6 +33,10 @@ MARTINI3_LABELS = [
     {"Label": "e", "Meaning": "Electron-rich", "Applies mainly to": "C / X"},
     {"Label": "v", "Meaning": "Electron-poor (vacancy)", "Applies mainly to": "C / X"},
 ]
+
+_SURFACE_CAPTION = "All generated surface workflows use Martini 3 compatible bead definitions."
+_HOOK_INSTALLED = False
+_ORIGINAL_CAPTION: Callable[..., object] | None = None
 
 
 def render_surface_bead_reference() -> None:
@@ -68,3 +74,25 @@ def render_surface_bead_reference() -> None:
             "Reference: [MartiniSurf bead map](https://github.com/BioKT/MartiniSurf/blob/master/martinisurf/data/CG_Beads_Martini3.png) · "
             "[Martini 3 small-molecule parametrization guide](https://cgmartini.nl/docs/tutorials/Martini3/Small_Molecule_Parametrization/)"
         )
+
+
+def install_surface_reference_hook() -> None:
+    """Attach the bead reference immediately after the Surface-step Martini 3 caption.
+
+    The main Streamlit app is intentionally kept unchanged here; the package hook is narrow,
+    idempotent, and only reacts to the exact Surface-step caption.
+    """
+    global _HOOK_INSTALLED, _ORIGINAL_CAPTION
+    if _HOOK_INSTALLED:
+        return
+
+    _ORIGINAL_CAPTION = st.caption
+
+    def caption_with_surface_reference(body, *args, **kwargs):
+        result = _ORIGINAL_CAPTION(body, *args, **kwargs)
+        if str(body) == _SURFACE_CAPTION:
+            render_surface_bead_reference()
+        return result
+
+    st.caption = caption_with_surface_reference
+    _HOOK_INSTALLED = True
