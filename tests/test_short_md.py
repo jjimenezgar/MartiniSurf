@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from streamlit_app.short_md import (
+    DEFAULT_MDRUN_THREADS,
     ShortMDConfig,
     ShortMDStage,
+    _mdrun_cmd,
     extract_mdrun_performance,
     patch_mdp_text,
     preview_rows,
@@ -71,3 +75,13 @@ def test_extract_mdrun_performance() -> None:
     text = "Performance:      123.456 ns/day,      0.194 hours/ns"
     assert extract_mdrun_performance(text) == (123.456, 0.194)
     assert extract_mdrun_performance("no performance line") == (None, None)
+
+
+def test_short_md_uses_conservative_thread_default() -> None:
+    config = ShortMDConfig()
+    assert config.mdrun_threads == DEFAULT_MDRUN_THREADS == 2
+
+
+def test_mdrun_command_limits_openmp_threads() -> None:
+    command = _mdrun_cmd("gmx", Path("run/stage"), 2)
+    assert command == ["gmx", "mdrun", "-deffnm", "run/stage", "-ntomp", "2", "-pin", "off"]
