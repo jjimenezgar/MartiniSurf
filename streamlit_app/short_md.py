@@ -166,7 +166,7 @@ def run_short_md(sim_root: Path, config: ShortMDConfig, repo_root: Path, extra_t
     emit(f"Topology(eq)   : {equilibrium_top}")
     emit(f"Topology(prod) : {production_top}")
     emit(f"Index          : {index_ndx}")
-    emit(f"Execution mode : CPU ({thread_count} OpenMP threads max)")
+    emit(f"Execution mode : CPU ({thread_count} OpenMP threads per rank; automatic thread-MPI ranks disabled)")
 
     env = os.environ.copy()
     env["PYTHONPATH"] = str(repo_root) + os.pathsep + env.get("PYTHONPATH", "")
@@ -340,11 +340,14 @@ def format_elapsed(seconds: float) -> str:
 
 
 def _mdrun_cmd(gmx: str, base: Path, thread_count: int) -> list[str]:
+    # External-MPI binaries run as a singleton here and do not accept -ntmpi.
+    mpi_args = [] if "mpi" in Path(gmx).name.lower() else ["-ntmpi", "1"]
     return [
         gmx,
         "mdrun",
         "-deffnm",
         str(base),
+        *mpi_args,
         "-ntomp",
         str(max(1, int(thread_count))),
         "-pin",

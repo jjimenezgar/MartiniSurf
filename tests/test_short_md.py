@@ -84,4 +84,11 @@ def test_short_md_uses_conservative_thread_default() -> None:
 
 def test_mdrun_command_limits_openmp_threads() -> None:
     command = _mdrun_cmd("gmx", Path("run/stage"), 2)
-    assert command == ["gmx", "mdrun", "-deffnm", "run/stage", "-ntomp", "2", "-pin", "off"]
+    assert command == ["gmx", "mdrun", "-deffnm", "run/stage", "-ntmpi", "1", "-ntomp", "2", "-pin", "off"]
+
+
+@pytest.mark.parametrize("binary", ["gmx_mpi", "/usr/bin/gmx_mpi"])
+def test_external_mpi_command_omits_thread_mpi_option(binary: str) -> None:
+    command = _mdrun_cmd(binary, Path("run/stage"), 2)
+    assert "-ntmpi" not in command
+    assert command[command.index("-ntomp") + 1] == "2"
