@@ -13,6 +13,7 @@ from pathlib import Path
 DEFAULT_OUTPUT_TAG = "Protein MD"
 DEFAULT_XTC_WRITE_EVERY_PS = 10.0
 DEFAULT_GROMPP_MAXWARN = 3
+DEFAULT_MDRUN_THREADS = 2
 DEFAULT_STAGE_SETTINGS = {
     "nvt": {"enabled": True, "dt_ps": 0.001, "time_ns": 0.02},
     "npt": {"enabled": True, "dt_ps": 0.005, "time_ns": 0.02},
@@ -35,6 +36,7 @@ class ShortMDConfig:
     output_tag: str = DEFAULT_OUTPUT_TAG
     xtc_write_every_ps: float = DEFAULT_XTC_WRITE_EVERY_PS
     grompp_maxwarn: int = DEFAULT_GROMPP_MAXWARN
+    mdrun_threads: int = DEFAULT_MDRUN_THREADS
     stages: tuple[ShortMDStage, ...] = ()
 
 
@@ -155,16 +157,25 @@ def run_short_md(sim_root: Path, config: ShortMDConfig, repo_root: Path, extra_t
     if not index_ndx.exists():
         raise FileNotFoundError(f"Missing required index file: {index_ndx}")
 
+    thread_count = max(1, min(int(config.mdrun_threads or DEFAULT_MDRUN_THREADS), 4))
+    safe_tag = _safe_tag(config.output_tag)
+    _cleanup_previous_run(work_dir, safe_tag)
+
     emit("Selected stages: " + " -> ".join(["minimization"] + [stage.name for stage in stages]))
     emit(f"Initial GRO    : {initial_gro}")
     emit(f"Topology(eq)   : {equilibrium_top}")
     emit(f"Topology(prod) : {production_top}")
     emit(f"Index          : {index_ndx}")
-    emit("Execution mode : CPU")
+    emit(f"Execution mode : CPU ({thread_count} OpenMP threads max)")
 
     env = os.environ.copy()
     env["PYTHONPATH"] = str(repo_root) + os.pathsep + env.get("PYTHONPATH", "")
     env["PATH"] = _path_with_tools(extra_tool_dirs)
+    env["GMX_MAXBACKUP"] = "-1"
+    env["OMP_NUM_THREADS"] = str(thread_count)
+    env["OPENBLAS_NUM_THREADS"] = "1"
+    env["MKL_NUM_THREADS"] = "1"
+    env["NUMEXPR_NUM_THREADS"] = "1"
 
     prev_gro = initial_gro
     prev_cpt: Path | None = None
@@ -173,9 +184,9 @@ def run_short_md(sim_root: Path, config: ShortMDConfig, repo_root: Path, extra_t
     try:
         emit(f"\n[Stage 1/{total_stages}] MINIMIZATION")
         em_src = _mdp_path_for(mdp_dir, "minimization", protocol_suffix)
-        em_dst = work_dir / f"{_safe_tag(config.output_tag)}_minimization.mdp"
+        em_dst = work_dir / f"{safe_tag}_minimization.mdp"
         em_dst.write_text(em_src.read_text())
-        em_base = work_dir / f"{_safe_tag(config.output_tag)}_minimization"
+        em_base = work_dir / f"{safe_tag}_minimization"
         em_cmd = [
             gmx,
             "grompp",
@@ -195,7 +206,7 @@ def run_short_md(sim_root: Path, config: ShortMDConfig, repo_root: Path, extra_t
             str(int(config.grompp_maxwarn)),
         ]
         _, grompp_elapsed = _run_cmd(em_cmd, top_dir, env, stdout_parts, stderr_parts, command_log)
-        em_res, mdrun_elapsed = _run_cmd([gmx, "mdrun", "-deffnm", str(em_base)], work_dir, env, stdout_parts, stderr_parts, command_log)
+        em_res, mdrun_elapsed = _run_cmd(_mdrun_cmd(gmx, em_base, thread_count), work_dir, env, stdout_parts, stderr_parts, command_log)
         ns_day, hour_ns = extract_mdrun_performance(em_res.stdout + "\n" + em_res.stderr)
         stage_results.append(ShortMDStageResult("minimization", grompp_elapsed, mdrun_elapsed, ns_day, hour_ns))
         prev_gro = em_base.with_suffix(".gro")
@@ -206,9 +217,9 @@ def run_short_md(sim_root: Path, config: ShortMDConfig, repo_root: Path, extra_t
             nsteps = safe_nsteps(stage.time_ns, stage.dt_ps)
             xtc_stride = max(1, int(round(config.xtc_write_every_ps / stage.dt_ps)))
             mdp_src = _mdp_path_for(mdp_dir, stage.name, protocol_suffix)
-            mdp_dst = work_dir / f"{_safe_tag(config.output_tag)}_{stage.name}.mdp"
+            mdp_dst = work_dir / f"{safe_tag}_{stage.name}.mdp"
             mdp_dst.write_text(patch_mdp_text(mdp_src.read_text(), stage.dt_ps, nsteps, xtc_stride))
-            base = work_dir / f"{_safe_tag(config.output_tag)}_{stage.name}"
+            base = work_dir / f"{safe_tag}_{stage.name}"
             stage_top = production_top if stage.name == "production" else equilibrium_top
             grompp_cmd = [
                 gmx,
@@ -231,7 +242,7 @@ def run_short_md(sim_root: Path, config: ShortMDConfig, repo_root: Path, extra_t
             if prev_cpt and prev_cpt.exists():
                 grompp_cmd.extend(["-t", str(prev_cpt)])
             _, grompp_elapsed = _run_cmd(grompp_cmd, top_dir, env, stdout_parts, stderr_parts, command_log)
-            mdrun_res, mdrun_elapsed = _run_cmd([gmx, "mdrun", "-deffnm", str(base)], work_dir, env, stdout_parts, stderr_parts, command_log)
+            mdrun_res, mdrun_elapsed = _run_cmd(_mdrun_cmd(gmx, base, thread_count), work_dir, env, stdout_parts, stderr_parts, command_log)
             ns_day, hour_ns = extract_mdrun_performance(mdrun_res.stdout + "\n" + mdrun_res.stderr)
             prev_gro = base.with_suffix(".gro")
             prev_cpt = base.with_suffix(".cpt")
@@ -262,7 +273,7 @@ def run_short_md(sim_root: Path, config: ShortMDConfig, repo_root: Path, extra_t
         )
 
     last_stage = stages[-1].name
-    last_base = work_dir / f"{_safe_tag(config.output_tag)}_{last_stage}"
+    last_base = work_dir / f"{safe_tag}_{last_stage}"
     emit("Short MD finished successfully.")
     emit(f"Last stage GRO: {last_base.with_suffix('.gro')}")
     return ShortMDResult(
@@ -326,6 +337,39 @@ def format_elapsed(seconds: float) -> str:
         return f"{int(minutes)} min {sec:.0f} s"
     hours, minutes = divmod(minutes, 60)
     return f"{int(hours)} h {int(minutes)} min {sec:.0f} s"
+
+
+def _mdrun_cmd(gmx: str, base: Path, thread_count: int) -> list[str]:
+    return [
+        gmx,
+        "mdrun",
+        "-deffnm",
+        str(base),
+        "-ntomp",
+        str(max(1, int(thread_count))),
+        "-pin",
+        "off",
+    ]
+
+
+def _cleanup_previous_run(work_dir: Path, safe_tag: str) -> None:
+    patterns = [
+        f"{safe_tag}_*",
+        f"#{safe_tag}_*#",
+    ]
+    for pattern in patterns:
+        for path in work_dir.glob(pattern):
+            if path.is_file():
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+    for path in work_dir.glob("#*#"):
+        if path.is_file():
+            try:
+                path.unlink()
+            except OSError:
+                pass
 
 
 def _run_cmd(
