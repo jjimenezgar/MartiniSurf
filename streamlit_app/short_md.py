@@ -66,6 +66,17 @@ class ShortMDResult:
     command_log: list[str]
 
 
+@dataclass
+class ShortMDAnalysisResult:
+    kind: str
+    x_label: str
+    y_label: str
+    points: list[tuple[float, float]]
+    output_path: Path
+    command: list[str]
+    stderr: str = ""
+
+
 def detect_gmx(extra_tool_dirs: list[Path] | None = None) -> str | None:
     path = _path_with_tools(extra_tool_dirs)
     return shutil.which("gmx", path=path) or shutil.which("gmx_mpi", path=path)
@@ -327,6 +338,68 @@ def extract_mdrun_performance(text: str) -> tuple[float | None, float | None]:
     if not match:
         return None, None
     return float(match.group(1)), float(match.group(2))
+
+
+def parse_xvg(path: Path) -> list[tuple[float, float]]:
+    """Read the first two numeric columns from a GROMACS XVG result."""
+    points: list[tuple[float, float]] = []
+    for line in path.read_text().splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("#", "@")):
+            continue
+        columns = stripped.split()
+        if len(columns) < 2:
+            continue
+        try:
+            points.append((float(columns[0]), float(columns[1])))
+        except ValueError:
+            continue
+    return points
+
+
+def run_short_md_analysis(
+    kind: str,
+    tpr: Path,
+    xtc: Path,
+    output_dir: Path,
+    gmx: str,
+) -> ShortMDAnalysisResult:
+    """Run an on-demand protein RMSD or per-residue RMSF analysis."""
+    normalized = kind.strip().lower()
+    if normalized not in {"rmsd", "rmsf"}:
+        raise ValueError("Analysis must be 'rmsd' or 'rmsf'.")
+    if not tpr.exists() or not xtc.exists():
+        raise FileNotFoundError("The selected stage needs both TPR and XTC files.")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"protein_{normalized}.xvg"
+    if normalized == "rmsd":
+        command = [gmx, "rms", "-s", str(tpr), "-f", str(xtc), "-o", str(output_path), "-tu", "ns"]
+        selection = "Protein\nProtein\n"
+        x_label, y_label = "Time (ns)", "RMSD (nm)"
+    else:
+        command = [gmx, "rmsf", "-s", str(tpr), "-f", str(xtc), "-o", str(output_path), "-res"]
+        selection = "Protein\n"
+        x_label, y_label = "Residue", "RMSF (nm)"
+
+    env = os.environ.copy()
+    env["GMX_MAXBACKUP"] = "-1"
+    result = subprocess.run(
+        command,
+        cwd=output_dir,
+        env=env,
+        input=selection,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "GROMACS analysis failed.").strip()
+        raise RuntimeError(detail[-2000:])
+    points = parse_xvg(output_path)
+    if not points:
+        raise RuntimeError(f"GROMACS created {output_path.name}, but it contains no numeric data.")
+    return ShortMDAnalysisResult(normalized, x_label, y_label, points, output_path, command, result.stderr[-2000:])
 
 
 def format_elapsed(seconds: float) -> str:
