@@ -1695,7 +1695,7 @@ def _render_short_md_analysis_controls(selected: dict[str, Path | None]) -> None
 
     with st.container(border=True):
         st.markdown("#### Protein dynamics")
-        st.caption("Calculate an aligned protein RMSD over time or a per-residue RMSF for the selected stage.")
+        st.caption("Calculate an aligned RMSD over time or a per-residue RMSF using only the protein BB beads.")
         rmsd_col, rmsf_col = st.columns(2)
         requested: str | None = None
         if rmsd_col.button("Analyse RMSD", icon=":material/timeline:", width="stretch", disabled=not available):
