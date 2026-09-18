@@ -53,6 +53,36 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
+## Automatic protein preparation
+
+Protein-mode runs now prepare protein-only input before `martinize2`, with no
+extra flag needed (also applies to the Streamlit workflow). Reinstall dependencies
+after updating: `pip install -r requirements.txt && pip install -e .`.
+
+- Keep the first structural model and select one alternate conformation per
+  residue by mean occupancy (ties prefer A).
+- Remove waters, nucleic acids, ions, heme, glycans and other nonprotein residues.
+  Standard amino acids in HETATM records are retained; MSE is explicitly
+  converted to MET. Other unidentified protein modifications require review.
+- Rebuild missing side-chain heavy atoms using PDBFixer/OpenMM. Terminal atoms
+  are left to martinize2's terminal patches. Missing backbone atoms, internal
+  numbering gaps and abnormal peptide distances stop with a residue-specific
+  error; missing loops are never automatically invented.
+- Preserve PDB chain/residue IDs through repair and reject empty or non-finite
+  coordinate output, including CG output from an otherwise successful command.
+
+`2_system/original_input.*` preserves the source, `prepared_protein.pdb` contains
+repairs, and `protein_preparation.json` records removals, alternate choices,
+MSE replacements, added atoms and deferred terminal atoms. Reconstructed atoms
+are modeled coordinates, not experimental observations. The cleaned structure
+represents **protein only**, not the original holo/glycosylated complex. Use the
+pre-CG complex workflow when cofactors or other components are required.
+
+DNA and pre-CG complex workflows do not use this protein repair. Local mmCIF
+inputs still pass through the existing MDTraj-to-PDB conversion; identifiers
+may be normalized during that conversion. Arbitrary modified amino acids,
+cyclic/capped peptides and unresolved chain breaks may require manual preparation.
+
 ## External Tools
 MartiniSurf expects the following tools in your environment:
 - `martinize2` for protein mode

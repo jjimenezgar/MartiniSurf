@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from martinisurf.utils.pdb_generation import load_clean_pdb
+from martinisurf.utils.protein_preparation import validate_pdb_coordinates
 from martinisurf.utils.pdb_to_gro import pdb_to_gro
 
 
@@ -3360,6 +3361,8 @@ def _python_package_versions() -> dict[str, str | None]:
         "martinisurf": _package_version("martinisurf") or _package_version("surfmartini"),
         "vermouth": _package_version("vermouth"),
         "mdtraj": _package_version("mdtraj"),
+        "pdbfixer": _package_version("pdbfixer"),
+        "openmm": _package_version("openmm"),
         "MDAnalysis": _package_version("MDAnalysis"),
         "numpy": _package_version("numpy"),
         "scipy": _package_version("scipy"),
@@ -3594,6 +3597,7 @@ def main(argv=None):
             merge_groups=merge_groups,
             balance_merged_chains=balance_merged_chains,
             validate_merged_alignment=not bool(args.dna),
+            protein_only=not bool(args.dna),
         )
         resolved_anchor_groups = _normalize_cli_residue_groups(args.anchor, pdb_abs, "--anchor")
         resolved_linker_groups = _normalize_cli_residue_groups(args.linker_group, pdb_abs, "--linker-group")
@@ -3709,6 +3713,9 @@ def main(argv=None):
                 martinize_cmd = retry_cmd
             else:
                 raise
+
+        if not args.dna:
+            validate_pdb_coordinates(system_cg_out)
 
         # Move ITP files
         for f in tmpdir.glob("*.itp"):
