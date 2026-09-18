@@ -47,6 +47,7 @@ from streamlit_app.short_md import (
     detect_gmx,
     format_elapsed,
     preview_rows,
+    run_short_md_analysis,
     run_short_md,
     selected_stages,
     validate_stage_order,
@@ -320,6 +321,9 @@ def _init_state() -> None:
         "short_md_view_water": False,
         "short_md_view_ions": False,
         "short_md_view_frame_stride": 1,
+        "short_md_analysis_result": {},
+        "short_md_analysis_error": "",
+        "short_md_analysis_signature": (),
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -1550,6 +1554,9 @@ def _store_short_md_result(result) -> None:
     st.session_state["short_md_last_xtc"] = str(result.last_xtc or "")
     st.session_state["short_md_stage_results"] = [asdict(stage) for stage in result.stage_results]
     st.session_state["short_md_command_log"] = result.command_log
+    st.session_state["short_md_analysis_result"] = {}
+    st.session_state["short_md_analysis_error"] = ""
+    st.session_state["short_md_analysis_signature"] = ()
     if result.work_dir.exists():
         zip_path = make_zip(result.work_dir, result.work_dir.parent / "Short_MD_Files.zip")
         st.session_state["short_md_zip_path"] = str(zip_path)
@@ -1675,6 +1682,82 @@ def _render_short_md_viewer() -> None:
         st.caption(f"{_short_md_stage_label(str(st.session_state.short_md_view_stage))} structure preview.")
 
     _render_short_md_gif_controls(selected, outdir, selection_text)
+    _render_short_md_analysis_controls(selected)
+
+
+def _render_short_md_analysis_controls(selected: dict[str, Path | None]) -> None:
+    stage_name = str(st.session_state.short_md_view_stage)
+    tpr = selected.get("tpr")
+    xtc = selected.get("xtc")
+    gmx = detect_gmx(TOOL_DIRS)
+    available = bool(tpr and xtc and gmx)
+    signature = (stage_name, str(tpr or ""), str(xtc or ""))
+
+    with st.container(border=True):
+        st.markdown("#### Protein dynamics")
+        st.caption("Calculate an aligned RMSD over time or a per-residue RMSF using only the protein BB beads.")
+        rmsd_col, rmsf_col = st.columns(2)
+        requested: str | None = None
+        if rmsd_col.button("Analyse RMSD", icon=":material/timeline:", width="stretch", disabled=not available):
+            requested = "rmsd"
+        if rmsf_col.button("Analyse RMSF", icon=":material/waves:", width="stretch", disabled=not available):
+            requested = "rmsf"
+
+        if not available:
+            st.caption("A completed trajectory stage with TPR and XTC files is required.")
+            return
+
+        if requested:
+            analysis_dir = Path(str(tpr)).parent / "analysis" / stage_name
+            with st.spinner(f"Calculating protein {requested.upper()}…"):
+                try:
+                    analysis = run_short_md_analysis(requested, Path(str(tpr)), Path(str(xtc)), analysis_dir, str(gmx))
+                except (OSError, RuntimeError, ValueError) as exc:
+                    st.session_state["short_md_analysis_result"] = {}
+                    st.session_state["short_md_analysis_error"] = str(exc)
+                    st.session_state["short_md_analysis_signature"] = signature
+                else:
+                    values = [value for _, value in analysis.points]
+                    st.session_state["short_md_analysis_result"] = {
+                        "kind": analysis.kind,
+                        "x_label": analysis.x_label,
+                        "y_label": analysis.y_label,
+                        "points": analysis.points,
+                        "mean": sum(values) / len(values),
+                        "maximum": max(values),
+                        "output_path": str(analysis.output_path),
+                    }
+                    st.session_state["short_md_analysis_error"] = ""
+                    st.session_state["short_md_analysis_signature"] = signature
+
+        if st.session_state.get("short_md_analysis_signature") != signature:
+            return
+        error = str(st.session_state.get("short_md_analysis_error") or "")
+        if error:
+            st.error(error)
+            return
+        result = st.session_state.get("short_md_analysis_result") or {}
+        if not result:
+            return
+
+        metric_a, metric_b, metric_c = st.columns(3)
+        metric_a.metric("Analysis", str(result["kind"]).upper())
+        metric_b.metric("Mean", f"{float(result['mean']):.3f} nm")
+        metric_c.metric("Maximum", f"{float(result['maximum']):.3f} nm")
+        chart_rows = [
+            {str(result["x_label"]): x_value, str(result["y_label"]): y_value}
+            for x_value, y_value in result["points"]
+        ]
+        st.line_chart(chart_rows, x=str(result["x_label"]), y=str(result["y_label"]), height=330)
+        output_path = Path(str(result["output_path"]))
+        if output_path.exists():
+            st.download_button(
+                "Download XVG data",
+                data=output_path.read_bytes(),
+                file_name=output_path.name,
+                mime="text/plain",
+                width="stretch",
+            )
 
 
 def _render_short_md_gif_controls(selected: dict[str, Path | None], outdir: Path, selection_text: str) -> None:
