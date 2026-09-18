@@ -4,6 +4,7 @@ MDAnalysis
 scipy
 vermouth
 mdtraj
+pdbfixer>=1.12,<2
 pytest
 streamlit==1.61.1
 git+https://github.com/eliobaby/Martini_mapper.git

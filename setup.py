@@ -63,6 +63,7 @@ setup(
         "scipy",
         "vermouth",
         "mdtraj",
+        "pdbfixer>=1.12,<2",
     ],
     entry_points={
         "console_scripts": [

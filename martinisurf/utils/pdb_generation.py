@@ -5,6 +5,7 @@ or AlphaFold UniProt database for MartiniSurf.
 """
 
 import json
+import shutil
 from pathlib import Path
 import urllib.request
 from urllib.error import URLError
@@ -248,6 +249,7 @@ def simple_clean_pdb(
     merge_groups: list[str] | None = None,
     balance_merged_chains: bool = False,
     validate_merged_alignment: bool = True,
+    preserve_boundaries: bool = False,
 ) -> Path:
     atom_lines: list[str] = []
     with open(infile) as fin:
@@ -273,6 +275,11 @@ def simple_clean_pdb(
 
     if validate_merged_alignment:
         validate_merged_chain_residue_alignment(filtered_lines, merge_groups)
+
+    if preserve_boundaries:
+        selected = set(filtered_lines)
+        filtered_lines = [line for line in infile.read_text().splitlines(keepends=True)
+                          if line in selected or line.startswith("TER")]
 
     with open(outfile, "w") as fout:
         for line in filtered_lines:
@@ -315,8 +322,14 @@ def load_clean_pdb(
     merge_groups: list[str] | None = None,
     balance_merged_chains: bool = False,
     validate_merged_alignment: bool = True,
+    protein_only: bool = False,
 ) -> Path:
+    (workdir / "2_system").mkdir(parents=True, exist_ok=True)
     raw_structure = resolve_pdb_input(pdb_input, workdir)
+    if protein_only:
+        original = workdir / "2_system" / f"original_input{raw_structure.suffix}"
+        if raw_structure.resolve() != original.resolve():
+            shutil.copy2(raw_structure, original)
     raw_pdb = raw_structure
     if _is_cif_path(raw_structure):
         cif_pdb = workdir / "2_system" / f"{raw_structure.stem}_from_cif.pdb"
@@ -326,13 +339,50 @@ def load_clean_pdb(
             cif_pdb,
         )
 
+    if protein_only:
+        from .protein_preparation import prepare_protein_pdb
+        raw_pdb = prepare_protein_pdb(
+            raw_pdb, workdir / "2_system/prepared_protein.pdb",
+            workdir / "2_system/protein_preparation.json", chain=chain,
+        )
+
     cleaned = workdir / "2_system/cleaned_input.pdb"
 
-    return simple_clean_pdb(
-        raw_pdb,
-        cleaned,
-        chain=chain,
-        merge_groups=merge_groups,
-        balance_merged_chains=balance_merged_chains,
-        validate_merged_alignment=validate_merged_alignment,
-    ).resolve()
+    try:
+        result = simple_clean_pdb(
+            raw_pdb,
+            cleaned,
+            chain=chain,
+            merge_groups=merge_groups,
+            balance_merged_chains=balance_merged_chains,
+            validate_merged_alignment=validate_merged_alignment,
+            preserve_boundaries=protein_only,
+        ).resolve()
+
+        if protein_only:
+            from .protein_preparation import validate_pdb_coordinates, validate_protein_backbone
+            validate_pdb_coordinates(result)
+            # Balancing can remove internal residues; validate the actual martinize input.
+            validate_protein_backbone(result)
+    except Exception as exc:
+        if protein_only:
+            report_path = workdir / "2_system/protein_preparation.json"
+            report = json.loads(report_path.read_text())
+            report.update(status="failed", error=str(exc))
+            report_path.write_text(json.dumps(report, indent=2) + "\n")
+        raise
+    if protein_only:
+        report_path = workdir / "2_system/protein_preparation.json"
+        report = json.loads(report_path.read_text())
+        prepared_atoms = [line for line in raw_pdb.read_text().splitlines() if line.startswith("ATOM")]
+        cleaned_atoms = [line for line in result.read_text().splitlines() if line.startswith("ATOM")]
+        before = _build_chain_residue_order(prepared_atoms)
+        after = _build_chain_residue_order(cleaned_atoms)
+        report["residues_removed_by_balancing"] = {
+            chain_id: [list(key) for key in keys if key not in set(after.get(chain_id, []))]
+            for chain_id, keys in before.items()
+        }
+        report["original_input"] = str(original)
+        report["cleaned_input"] = str(result)
+        report_path.write_text(json.dumps(report, indent=2) + "\n")
+    return result
