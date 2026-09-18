@@ -373,13 +373,61 @@ def run_short_md_analysis(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"protein_{normalized}.xvg"
+    backbone_index = output_dir / "protein_backbone.ndx"
+    select_command = [
+        gmx,
+        "select",
+        "-s",
+        str(tpr),
+        "-on",
+        str(backbone_index),
+        "-select",
+        'group "Protein" and name BB',
+    ]
+    select_result = subprocess.run(
+        select_command,
+        cwd=output_dir,
+        env={**os.environ, "GMX_MAXBACKUP": "-1"},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if select_result.returncode != 0 or not backbone_index.exists():
+        detail = (select_result.stderr or select_result.stdout or "Could not select protein BB beads.").strip()
+        raise RuntimeError(detail[-2000:])
+
     if normalized == "rmsd":
-        command = [gmx, "rms", "-s", str(tpr), "-f", str(xtc), "-o", str(output_path), "-tu", "ns"]
-        selection = "Protein\nProtein\n"
+        command = [
+            gmx,
+            "rms",
+            "-s",
+            str(tpr),
+            "-f",
+            str(xtc),
+            "-n",
+            str(backbone_index),
+            "-o",
+            str(output_path),
+            "-tu",
+            "ns",
+        ]
+        selection = "0\n0\n"
         x_label, y_label = "Time (ns)", "RMSD (nm)"
     else:
-        command = [gmx, "rmsf", "-s", str(tpr), "-f", str(xtc), "-o", str(output_path), "-res"]
-        selection = "Protein\n"
+        command = [
+            gmx,
+            "rmsf",
+            "-s",
+            str(tpr),
+            "-f",
+            str(xtc),
+            "-n",
+            str(backbone_index),
+            "-o",
+            str(output_path),
+            "-res",
+        ]
+        selection = "0\n"
         x_label, y_label = "Residue", "RMSF (nm)"
 
     env = os.environ.copy()
