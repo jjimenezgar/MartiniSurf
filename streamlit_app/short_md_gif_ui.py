@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from streamlit_app.short_md_gif_pillow import generate_short_md_trajectory_gif
+from streamlit_app.short_md_gif_compact import generate_short_md_trajectory_gif
 
 
 _VIEW_OPTIONS = {
@@ -84,10 +84,6 @@ def install(app_module) -> None:
                 disabled=not gif_available,
             ):
                 with st.spinner("Generating trajectory GIF"):
-                    # Call the dependency-light renderer directly. This avoids a
-                    # stale function reference in streamlit_app_legacy after a
-                    # Streamlit hot reload, which previously caused TypeError
-                    # when FPS/max_frames/view_plane were passed.
                     gif_bytes, error, frame_count = generate_short_md_trajectory_gif(
                         gro,
                         tpr,
@@ -136,7 +132,7 @@ def install(app_module) -> None:
                         f"{stage_label} · {_VIEW_OPTIONS.get(str(st.session_state.short_md_gif_view), 'xz').upper()} "
                         f"· {int(st.session_state.short_md_gif_fps)} FPS · {frame_count} frames"
                     ),
-                    width="stretch",
+                    width=720,
                 )
             elif error:
                 actions[1].warning(str(error))
