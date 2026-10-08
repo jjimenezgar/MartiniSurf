@@ -40,13 +40,15 @@ def test_deposition_mdp_keeps_deposition_stage(tmp_path: Path) -> None:
     assert adsorption_config(tmp_path, config) is config
 
 
-def test_restrained_topology_does_not_hide_broken_deposition_build(tmp_path: Path) -> None:
+def test_compatibility_restrained_topology_is_allowed_in_adsorption(tmp_path: Path) -> None:
     _tree(tmp_path)
-    (tmp_path / "0_topology" / "system_final_res.top").write_text("; restrained topology\n")
+    (tmp_path / "0_topology" / "system_final_res.top").write_text("; compatibility topology\n")
 
-    assert not is_adsorption_short_md(tmp_path)
-    config = _config()
-    assert adsorption_config(tmp_path, config) is config
+    # Current Adsorption builds can retain *_res.top compatibility aliases.
+    # The intentionally missing deposition MDP is the protocol discriminator.
+    assert is_adsorption_short_md(tmp_path)
+    config = adsorption_config(tmp_path, _config())
+    assert [stage.name for stage in config.stages] == ["nvt", "npt", "production"]
 
 
 def test_dna_deposition_mdp_is_recognized(tmp_path: Path) -> None:
