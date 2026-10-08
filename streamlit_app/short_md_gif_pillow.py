@@ -1,14 +1,13 @@
 """Dependency-light Short MD GIF rendering for MartiniSurf.
 
 The Streamlit deployment should not need Playwright/Chromium just to export a
-trajectory GIF.  This renderer uses mdtraj for XTC coordinates and Pillow for
-2-D drawing.  It keeps the surface reference frame when the surface is shown,
+trajectory GIF. This renderer uses mdtraj for XTC coordinates and Pillow for
+2-D drawing. It keeps the surface reference frame when the surface is shown,
 while protein-only views are rigidly aligned for a stable camera.
 """
 from __future__ import annotations
 
 import io
-import math
 from pathlib import Path
 
 
@@ -51,7 +50,6 @@ def _make_protein_whole(xyz, boxes, atoms):
         box = boxes[frame_index] if boxes is not None and len(boxes) > frame_index else None
         if box is None:
             continue
-        # Rebuild the backbone from minimum-image displacements.
         for previous, current in zip(bb, bb[1:]):
             prev_resid = int(atoms[previous].get("resid", 0))
             cur_resid = int(atoms[current].get("resid", 0))
@@ -59,7 +57,6 @@ def _make_protein_whole(xyz, boxes, atoms):
                 continue
             delta = xyz[frame_index, current] - xyz[frame_index, previous]
             whole[frame_index, current] = whole[frame_index, previous] + _minimum_image(delta, box)
-        # Place side chains next to their reconstructed BB bead.
         for indices in by_residue.values():
             anchors = [idx for idx in indices if str(atoms[idx].get("name", "")).strip().upper().startswith("BB")]
             if not anchors:
@@ -109,6 +106,22 @@ def _stable_subsample(indices: list[int], limit: int) -> list[int]:
     return [indices[i] for i in _sample_indices(len(indices), limit)]
 
 
+def _project_point(point, view_plane: str) -> tuple[float, float, float]:
+    """Project 3-D coordinates onto a fixed scientific viewing plane.
+
+    XZ and YZ are lateral views with Z kept vertical, which is the meaningful
+    direction for protein approach to an XY surface. XY is retained as a top
+    view for inspection of lateral motion.
+    """
+    x, y, z = map(float, point)
+    plane = str(view_plane).strip().lower()
+    if plane == "yz":
+        return y, z, x
+    if plane == "xy":
+        return x, y, z
+    return x, z, y
+
+
 def generate_short_md_trajectory_gif(
     gro_path: Path | None,
     tpr_path: Path | None,
@@ -125,17 +138,25 @@ def generate_short_md_trajectory_gif(
     show_ions: bool = False,
     width: int = 960,
     height: int = 700,
+    fps: int = 10,
+    max_frames: int = 40,
+    view_plane: str = "xz",
 ) -> tuple[bytes | None, str | None, int]:
-    """Generate a Short MD GIF with mdtraj + Pillow; no browser dependency."""
+    """Generate a PBC-safe Short MD GIF with a surface-oriented fixed camera."""
     del tpr_path, outdir, selection_text, gmx_bin, frame_count_hint
     if not gro_path or not xtc_path:
         return None, "A GRO and XTC are required to generate the trajectory GIF.", 0
     if not Path(gro_path).exists() or not Path(xtc_path).exists():
         return None, "The selected trajectory files are not available anymore.", 0
+    if int(fps) < 1:
+        return None, "GIF FPS must be at least 1.", 0
+    if int(max_frames) < 1:
+        return None, "GIF max frames must be at least 1.", 0
+    if str(view_plane).lower() not in {"xz", "yz", "xy"}:
+        return None, "GIF view must be XZ, YZ or XY.", 0
 
     try:
         import mdtraj as md
-        import numpy as np
         from PIL import Image, ImageDraw
         from streamlit_app import molecular_viewer as mv
     except ImportError as exc:
@@ -148,7 +169,7 @@ def generate_short_md_trajectory_gif(
     if traj.n_frames == 0:
         return None, "The selected trajectory contains no frames.", 0
 
-    frame_ids = _sample_indices(traj.n_frames, int(getattr(mv, "MAX_TRAJECTORY_GIF_FRAMES", 40)))
+    frame_ids = _sample_indices(traj.n_frames, min(120, max(1, int(max_frames))))
     traj = traj[frame_ids]
     atoms = mv._parse_gro_atoms(Path(gro_path))
     if len(atoms) != traj.n_atoms:
@@ -167,8 +188,6 @@ def generate_short_md_trajectory_gif(
         resn = str(atom.get("resn", "")).strip().upper()
         name = str(atom.get("name", "")).strip().upper()
         if idx in protein_set:
-            # GōMartini CA virtual sites are intentionally excluded because they
-            # are force-field helpers rather than physical CG beads.
             categories.append("protein_bb" if name.startswith("BB") else "protein_sc")
         elif resn in surface_resn:
             categories.append("surface")
@@ -181,9 +200,12 @@ def generate_short_md_trajectory_gif(
         else:
             categories.append("other")
 
+    # GIFs deliberately use the connected BB trace as the protein glyph. Side
+    # chains made the compact 2-D view look like detached pink particles and do
+    # not help interpret protein-to-surface approach.
     enabled = {
         "protein_bb": show_protein,
-        "protein_sc": show_protein,
+        "protein_sc": False,
         "surface": show_surface,
         "linker": show_linker,
         "water": show_water,
@@ -194,22 +216,18 @@ def generate_short_md_trajectory_gif(
     if not visible:
         return None, "Select at least one component that is present in the trajectory.", 0
 
-    # Keep visualization lightweight and deterministic.
     water = [i for i in visible if categories[i] == "water"]
     surface = [i for i in visible if categories[i] == "surface"]
     keep_water = set(_stable_subsample(water, 650))
     keep_surface = set(_stable_subsample(surface, 1400))
     visible = [
         i for i in visible
-        if categories[i] != "water" or i in keep_water
-        if categories[i] != "surface" or i in keep_surface
+        if (categories[i] != "water" or i in keep_water)
+        and (categories[i] != "surface" or i in keep_surface)
     ]
 
     boxes = traj.unitcell_vectors
     xyz = _make_protein_whole(traj.xyz, boxes, atoms)
-    # When the surface is shown it is the physical reference frame; do not
-    # remove protein translation/rotation relative to it.  For protein-only
-    # views, rigid alignment gives a stable camera like MartiniSolv.
     if show_protein and not show_surface:
         xyz = _rigid_align(xyz, bb_indices or protein_indices)
 
@@ -217,22 +235,14 @@ def generate_short_md_trajectory_gif(
     center = xyz[:, center_indices, :].mean(axis=(0, 1))
     coords = xyz - center
 
-    ay = math.radians(24.0)
-    ax = math.radians(-18.0)
-    cy, sy = math.cos(ay), math.sin(ay)
-    cx, sx = math.cos(ax), math.sin(ax)
     projected_frames: list[dict[int, tuple[float, float, float]]] = []
     all_xy: list[tuple[float, float]] = []
     for frame in coords:
         projected: dict[int, tuple[float, float, float]] = {}
         for atom_index in visible:
-            x, y, z = map(float, frame[atom_index])
-            x1 = cy * x + sy * z
-            z1 = -sy * x + cy * z
-            y2 = cx * y - sx * z1
-            z2 = sx * y + cx * z1
-            projected[atom_index] = (x1, y2, z2)
-            all_xy.append((x1, y2))
+            projected_point = _project_point(frame[atom_index], view_plane)
+            projected[atom_index] = projected_point
+            all_xy.append((projected_point[0], projected_point[1]))
         projected_frames.append(projected)
 
     min_x = min(x for x, _ in all_xy)
@@ -246,16 +256,13 @@ def generate_short_md_trajectory_gif(
 
     palette = {
         "protein_bb": "#FF4FA3",
-        "protein_sc": "#FF9DCC",
         "surface": "#42C7D5",
         "linker": "#E2B600",
         "water": "#D5DCE1",
         "ions": "#48A868",
     }
-    radii = {"protein_bb": 5, "protein_sc": 3, "surface": 3, "linker": 5, "water": 2, "ions": 3}
+    radii = {"protein_bb": 5, "surface": 3, "linker": 5, "water": 2, "ions": 3}
 
-    # Consecutive BB beads define the visual backbone.  Do not connect across
-    # residue-number resets or separate chains/fragments.
     edges: list[tuple[int, int]] = []
     for left, right in zip(bb_indices, bb_indices[1:]):
         gap = int(atoms[right].get("resid", 0)) - int(atoms[left].get("resid", 0))
@@ -288,12 +295,13 @@ def generate_short_md_trajectory_gif(
     if not images:
         return None, "No frames were rendered for the trajectory GIF.", 0
     buffer = io.BytesIO()
+    duration_ms = max(40, round(1000 / int(fps)))
     images[0].save(
         buffer,
         format="GIF",
         save_all=True,
         append_images=images[1:],
-        duration=180,
+        duration=duration_ms,
         loop=0,
         optimize=True,
     )
