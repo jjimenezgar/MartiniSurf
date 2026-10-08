@@ -15,6 +15,32 @@ def _existing(value) -> Path | None:
     return path if path.exists() else None
 
 
+def _performance_values(row: dict[str, object]) -> tuple[float | None, float | None]:
+    """Return ns/day and h/ns, falling back to measured wall time when needed.
+
+    Some GROMACS versions print the performance summary in a format that the
+    legacy parser does not recognize.  For dynamics stages we can still derive
+    the same quantities exactly from simulated time and measured MDRUN wall
+    time.  Minimization has no simulated nanoseconds, so throughput is undefined.
+    """
+    ns_day = row.get("ns_day")
+    hour_ns = row.get("hour_ns")
+    if ns_day is not None and hour_ns is not None:
+        return float(ns_day), float(hour_ns)
+
+    time_ns = row.get("time_ns")
+    elapsed_s = float(row.get("mdrun_elapsed_s") or 0.0)
+    if time_ns is None or elapsed_s <= 0:
+        return None, None
+    simulated_ns = float(time_ns)
+    if simulated_ns <= 0:
+        return None, None
+
+    ns_day_fallback = simulated_ns * 86400.0 / elapsed_s
+    hour_ns_fallback = elapsed_s / (3600.0 * simulated_ns)
+    return ns_day_fallback, hour_ns_fallback
+
+
 def install(app_module) -> None:
     """Patch the loaded root Streamlit module with improved Short MD UX."""
     st = app_module.st
@@ -26,9 +52,6 @@ def install(app_module) -> None:
         stage_rows = st.session_state.get("short_md_stage_results") or []
         completed = {str(row.get("name", "")).strip().lower() for row in stage_rows}
 
-        # The runner records the final-stage paths explicitly. Use those as a
-        # reliable production fallback instead of depending only on filename
-        # globbing; this fixes completed production runs missing from the UI.
         if "production" in completed and "production" not in artifacts:
             gro = _existing(st.session_state.get("short_md_last_gro"))
             tpr = _existing(st.session_state.get("short_md_last_tpr"))
@@ -36,8 +59,6 @@ def install(app_module) -> None:
             if gro:
                 artifacts["production"] = {"gro": gro, "tpr": tpr, "xtc": xtc}
 
-        # Recover any other completed stage from its output files if a custom
-        # simulation name or stale browser state confused the old exact prefix.
         if work_dir:
             for stage in app_module.STAGE_ORDER:
                 if stage in artifacts or stage not in completed:
@@ -55,47 +76,31 @@ def install(app_module) -> None:
                     "xtc": xtc if xtc.exists() else None,
                 }
 
-        # Keep the protocol order rather than filesystem/glob order.
         return {stage: artifacts[stage] for stage in app_module.STAGE_ORDER if stage in artifacts}
 
     def render_per_stage_performance() -> None:
         stage_rows = st.session_state.get("short_md_stage_results") or []
         if not stage_rows:
             return
+
         rows = []
         for row in stage_rows:
             stage = str(row.get("name", "")).strip().lower()
             label = "Minimization" if stage == "minimization" else app_module._short_md_stage_label(stage)
-            rows.append({
-                "Stage": label,
-                "dt (ps)": row.get("dt_ps"),
-                "time (ns)": row.get("time_ns"),
-                "nsteps": row.get("nsteps"),
-                "GROMPP": app_module.format_elapsed(float(row.get("grompp_elapsed_s") or 0.0)),
-                "MDRUN": app_module.format_elapsed(float(row.get("mdrun_elapsed_s") or 0.0)),
-                "ns/day": round(float(row["ns_day"]), 4) if row.get("ns_day") is not None else None,
-                "h/ns": round(float(row["hour_ns"]), 4) if row.get("hour_ns") is not None else None,
-                "saved frame dt (ps)": row.get("saved_frame_dt_ps"),
-            })
+            elapsed_s = float(row.get("grompp_elapsed_s") or 0.0) + float(row.get("mdrun_elapsed_s") or 0.0)
+            ns_day, hour_ns = _performance_values(row)
+            rows.append(
+                {
+                    "Stage": label,
+                    "Elapsed": app_module.format_elapsed(elapsed_s),
+                    "Performance (ns/day)": f"{ns_day:.3f}" if ns_day is not None else "—",
+                    "Performance (h/ns)": f"{hour_ns:.3f}" if hour_ns is not None else "—",
+                }
+            )
 
         with st.container(border=True):
             st.markdown("#### Performance by stage")
-            st.caption("GROMACS timing and throughput for every completed Short MD stage.")
             st.dataframe(rows, hide_index=True, use_container_width=True)
-
-            selected = str(st.session_state.get("short_md_view_stage", "production")).lower()
-            selected_row = next((row for row in stage_rows if str(row.get("name", "")).lower() == selected), None)
-            if selected_row and selected_row.get("ns_day") is not None:
-                a, b, c = st.columns(3)
-                a.metric(
-                    f"{app_module._short_md_stage_label(selected)} throughput",
-                    f"{float(selected_row['ns_day']):.3f} ns/day",
-                )
-                b.metric("hours/ns", f"{float(selected_row.get('hour_ns') or 0.0):.3f}")
-                c.metric(
-                    "MDRUN wall time",
-                    app_module.format_elapsed(float(selected_row.get("mdrun_elapsed_s") or 0.0)),
-                )
 
     def render_results() -> None:
         returncode = st.session_state.get("short_md_returncode")
