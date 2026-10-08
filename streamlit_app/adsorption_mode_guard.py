@@ -4,6 +4,8 @@ from __future__ import annotations
 from collections.abc import MutableMapping, Sequence
 from pathlib import Path
 
+from streamlit_app.adsorption_short_md import sanitize_adsorption_production_mdps
+
 
 _DEPOSITION_MDP_NAMES = ("deposition.mdp", "deposition_dna.mdp")
 _MARKER_KEY = "_short_md_deposition_forced_off_by_adsorption"
@@ -59,6 +61,7 @@ def install(app_module) -> None:
 
     def run_martinisurf(args, run_root: Path, repo_root: Path):
         adsorption = _args_use_adsorption(args)
+        sim_root = Path(run_root) / "Simulation_Files"
         if adsorption:
             # A project directory can be reused. Remove an old deposition MDP
             # before the new Adsorption build so it can never leak into exports.
@@ -69,6 +72,10 @@ def install(app_module) -> None:
             # generator. This second cleanup also protects against stale files
             # left by older versions or interrupted/reused runs.
             remove_adsorption_deposition_mdps(Path(run_root))
+            # Make the downloadable Production protocol match the intended
+            # Adsorption physics: no protein POSRES or pulling, while SRF
+            # freeze groups remain intact.
+            sanitize_adsorption_production_mdps(sim_root)
         return result
 
     app_module._render_short_md_step = render_short_md_step
