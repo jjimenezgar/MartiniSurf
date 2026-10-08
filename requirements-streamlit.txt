@@ -1,3 +1,4 @@
 -r requirements.txt
 streamlit>=1.37
 rdkit==2026.3.5
+Pillow>=10
