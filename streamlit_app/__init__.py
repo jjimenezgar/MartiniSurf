@@ -2,8 +2,10 @@
 
 from streamlit_app.adsorption_short_md import install_adsorption_short_md_hook
 from streamlit_app.resource_guard import install_subprocess_resource_guard
+from streamlit_app.short_md_gif_pillow import install as install_short_md_gif_renderer
 from streamlit_app.surface_reference import install_surface_reference_hook
 
 install_subprocess_resource_guard()
 install_surface_reference_hook()
 install_adsorption_short_md_hook()
+install_short_md_gif_renderer()
