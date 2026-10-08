@@ -19,9 +19,9 @@ def _performance_values(row: dict[str, object]) -> tuple[float | None, float | N
     """Return ns/day and h/ns, falling back to measured wall time when needed.
 
     Some GROMACS versions print the performance summary in a format that the
-    legacy parser does not recognize.  For dynamics stages we can still derive
-    the same quantities exactly from simulated time and measured MDRUN wall
-    time.  Minimization has no simulated nanoseconds, so throughput is undefined.
+    legacy parser does not recognize. For dynamics stages we can still derive
+    throughput from simulated time and measured MDRUN wall time. Minimization
+    has no simulated nanoseconds, so throughput is undefined.
     """
     ns_day = row.get("ns_day")
     hour_ns = row.get("hour_ns")
@@ -86,15 +86,14 @@ def install(app_module) -> None:
         rows = []
         for row in stage_rows:
             stage = str(row.get("name", "")).strip().lower()
-            label = "Minimization" if stage == "minimization" else app_module._short_md_stage_label(stage)
-            elapsed_s = float(row.get("grompp_elapsed_s") or 0.0) + float(row.get("mdrun_elapsed_s") or 0.0)
-            ns_day, hour_ns = _performance_values(row)
+            label = "MINIMIZATION" if stage == "minimization" else app_module._short_md_stage_label(stage).upper()
+            wall_time_s = float(row.get("mdrun_elapsed_s") or 0.0)
+            ns_day, _hour_ns = _performance_values(row)
             rows.append(
                 {
                     "Stage": label,
-                    "Elapsed": app_module.format_elapsed(elapsed_s),
+                    "Wall time (s)": round(wall_time_s, 2),
                     "Performance (ns/day)": f"{ns_day:.3f}" if ns_day is not None else "—",
-                    "Performance (h/ns)": f"{hour_ns:.3f}" if hour_ns is not None else "—",
                 }
             )
 
