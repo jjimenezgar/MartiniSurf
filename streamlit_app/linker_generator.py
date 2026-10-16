@@ -236,7 +236,7 @@ def normalize_linker_martini_types(itp_path: Path) -> int:
             if not cleaned:
                 raise ValueError(f"Empty Martini bead type after cleaning atom {fields[0]}.")
             fields[1] = cleaned
-            newline = "\\n" if raw.endswith("\\n") else ""
+            newline = "\n" if raw.endswith("\n") else ""
             lines[i] = " ".join(fields) + (f" ;{comment.rstrip(chr(10))}" if separator else "") + newline
             changed += 1
     if changed:
@@ -276,7 +276,7 @@ def generate_linker_from_smiles(smiles: str, molname: str, output_dir: Path) -> 
         if completed.returncode == 0 and gro_path.exists() and itp_path.exists():
             normalized = normalize_linker_martini_types(itp_path)
             if normalized:
-                log += f"\\nNormalized {normalized} Martini bead type(s) with trailing question marks."
+                log += f"\nNormalized {normalized} Martini bead type(s) with trailing question marks."
             beads = parse_linker_gro(gro_path)
             if beads:
                 return LinkerGenerationResult(True, gro_path, itp_path, beads, "Linker generated.", log, generator)
