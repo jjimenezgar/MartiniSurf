@@ -138,12 +138,12 @@ def build_args(config: BuildConfig) -> list[str]:
     if needs_linker_file:
         _append_value(args, "--linker", config.linker_path)
         _append_value(args, "--linker-surface-bead", config.linker_surface_bead)
+        _append_value(args, "--linker-protein-bead", config.linker_protein_bead)
     if config.orientation_mode == "Linker":
         for group in config.linker_groups:
             _append_group(args, "--linker-group", group)
         _append_value(args, "--linker-prot-dist", config.linker_prot_dist)
         _append_value(args, "--linker-surf-dist", config.linker_surf_dist)
-        _append_value(args, "--linker-protein-bead", config.linker_protein_bead)
         if config.invert_linker:
             args.append("--invert-linker")
     else:
