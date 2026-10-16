@@ -105,7 +105,7 @@ def parse_martini_mapper_report(path: Path, beads: list[LinkerBead]) -> list[Lin
         rows.append(
             LinkerMappingRow(
                 bead_label=f"{zero_index + 1}: {bead_name}",
-                martini_type=parts[1],
+                martini_type=parts[1].rstrip("?"),
                 atom_indices_1based=[index + 1 for index in atom_indices],
             )
         )
@@ -210,6 +210,40 @@ def _generator_candidates(smiles: str, molname: str, output_dir: Path) -> list[t
     return candidates
 
 
+def normalize_linker_martini_types(itp_path: Path) -> int:
+    """Remove uncertainty suffixes from Martini bead types in [ atoms ].
+
+    Only the atom type column is modified; charges, indices and comments are
+    preserved. This avoids invalid types such as TN3a? reaching GROMACS.
+    """
+    lines = itp_path.read_text().splitlines(keepends=True)
+    section = ""
+    changed = 0
+    for i, raw in enumerate(lines):
+        code, separator, comment = raw.partition(";")
+        stripped = code.strip()
+        if stripped.startswith("[") and "]" in stripped:
+            section = stripped[1:stripped.index("]")].strip().lower()
+            continue
+        if section != "atoms" or not stripped or stripped.startswith("#"):
+            continue
+        fields = code.split()
+        if len(fields) < 7 or not fields[0].isdigit():
+            continue
+        original = fields[1]
+        cleaned = original.rstrip("?")
+        if cleaned != original:
+            if not cleaned:
+                raise ValueError(f"Empty Martini bead type after cleaning atom {fields[0]}.")
+            fields[1] = cleaned
+            newline = "\\n" if raw.endswith("\\n") else ""
+            lines[i] = " ".join(fields) + (f" ;{comment.rstrip(chr(10))}" if separator else "") + newline
+            changed += 1
+    if changed:
+        itp_path.write_text("".join(lines))
+    return changed
+
+
 def generate_linker_from_smiles(smiles: str, molname: str, output_dir: Path) -> LinkerGenerationResult:
     smiles = smiles.strip()
     molname = safe_molecule_name(molname)
@@ -240,6 +274,9 @@ def generate_linker_from_smiles(smiles: str, molname: str, output_dir: Path) -> 
         gro_path = output_dir / f"{molname}.gro"
         itp_path = output_dir / f"{molname}.itp"
         if completed.returncode == 0 and gro_path.exists() and itp_path.exists():
+            normalized = normalize_linker_martini_types(itp_path)
+            if normalized:
+                log += f"\\nNormalized {normalized} Martini bead type(s) with trailing question marks."
             beads = parse_linker_gro(gro_path)
             if beads:
                 return LinkerGenerationResult(True, gro_path, itp_path, beads, "Linker generated.", log, generator)
