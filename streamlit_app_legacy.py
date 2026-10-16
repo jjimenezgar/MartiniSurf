@@ -804,6 +804,8 @@ def _render_linker_generator() -> None:
                 st.markdown("##### Linker bead charge")
                 st.caption("Assign a charge to one bead, as in MartiniSolv. Bead types are unchanged.")
                 st.selectbox("Net charge to assign (e)", [-2, -1, 0, 1, 2], key="linker_net_charge")
+                if st.session_state.get("linker_charged_bead") not in options:
+                    st.session_state.linker_charged_bead = options[0]
                 st.selectbox("Bead carrying the charge", options, key="linker_charged_bead")
                 if st.button("Apply linker charge", key="apply_linker_charge"):
                     try:
