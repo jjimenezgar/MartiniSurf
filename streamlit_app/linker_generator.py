@@ -254,3 +254,43 @@ def generate_linker_from_smiles(smiles: str, molname: str, output_dir: Path) -> 
         "\n\n".join(logs),
         candidates[-1][0],
     )
+
+
+def assign_linker_bead_charge(itp_path: Path, bead_index: int, charge: int) -> float:
+    """Assign a MartiniSolv-style net charge to one selected linker bead.
+
+    Existing bead charges are preserved except for the selected bead. Returns
+    the resulting net molecular charge. The Martini bead type is unchanged.
+    """
+    if charge not in (-2, -1, 0, 1, 2):
+        raise ValueError("Charge must be one of -2, -1, 0, +1, +2.")
+    lines = itp_path.read_text().splitlines(keepends=True)
+    section = ""
+    found = False
+    total = 0.0
+    for i, raw in enumerate(lines):
+        stripped = raw.split(";", 1)[0].strip()
+        if stripped.startswith("[") and "]" in stripped:
+            section = stripped[1:stripped.index("]")].strip().lower()
+            continue
+        if section != "atoms" or not stripped or stripped.startswith("#"):
+            continue
+        fields = stripped.split()
+        if len(fields) < 7:
+            continue
+        try:
+            index = int(fields[0])
+            existing = float(fields[6])
+        except ValueError:
+            continue
+        if index == bead_index:
+            fields[6] = str(charge)
+            comment = raw.split(";", 1)[1].rstrip("\\r\n") if ";" in raw else ""
+            lines[i] = " ".join(fields) + (f" ;{comment}" if comment else "") + "\n"
+            existing = float(charge)
+            found = True
+        total += existing
+    if not found:
+        raise ValueError(f"Bead {bead_index} was not found in [ atoms ] of {itp_path.name}.")
+    itp_path.write_text("".join(lines))
+    return total
