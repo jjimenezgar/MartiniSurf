@@ -17,6 +17,7 @@ from streamlit_app.command_builder import BuildConfig, build_args, shell_command
 from streamlit_app.logs import summarize_log
 from streamlit_app.linker_generator import (
     generate_linker_from_smiles,
+    assign_linker_bead_charge,
     parse_linker_gro,
     parse_martini_mapper_report,
     safe_molecule_name,
@@ -113,6 +114,8 @@ PERSISTED_STATE_KEYS = {
     "surface_linkers",
     "linker_generator_smiles",
     "linker_generator_molname",
+    "linker_net_charge",
+    "linker_charged_bead",
     "generated_linker_smiles",
     "generated_linker_path",
     "generated_linker_itp_path",
@@ -270,6 +273,8 @@ def _init_state() -> None:
         "surface_linkers": 0,
         "linker_generator_smiles": "",
         "linker_generator_molname": "LINKER",
+        "linker_net_charge": 0,
+        "linker_charged_bead": "",
         "generated_linker_smiles": "",
         "generated_linker_path": "",
         "generated_linker_itp_path": "",
@@ -796,6 +801,19 @@ def _render_linker_generator() -> None:
                 st.selectbox("Bead oriented toward surface", options, key="linker_surface_bead")
                 st.selectbox("Bead connected to protein", options, key="linker_protein_bead")
                 _sync_linker_orientation_from_selected_beads()
+                st.markdown("##### Linker bead charge")
+                st.caption("Assign a charge to one bead, as in MartiniSolv. Bead types are unchanged.")
+                st.selectbox("Net charge to assign (e)", [-2, -1, 0, 1, 2], key="linker_net_charge")
+                st.selectbox("Bead carrying the charge", options, key="linker_charged_bead")
+                if st.button("Apply linker charge", key="apply_linker_charge"):
+                    try:
+                        itp_path = Path(st.session_state.generated_linker_itp_path)
+                        selected = st.session_state.linker_charged_bead
+                        bead_index = int(str(selected).split(":", 1)[0])
+                        net = assign_linker_bead_charge(itp_path, bead_index, int(st.session_state.linker_net_charge))
+                        st.success(f"Updated {itp_path.name}; resulting linker charge: {net:+g} e.")
+                    except (ValueError, OSError) as exc:
+                        st.error(f"Could not update linker charge: {exc}")
                 st.caption(f"Linker file: `{generated_path.name}`")
         elif st.session_state.get("linker_generator_message"):
             st.info(st.session_state.linker_generator_message)
