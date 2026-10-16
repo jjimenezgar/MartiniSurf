@@ -476,12 +476,17 @@ def _append_surface_linkers(
             f"{len(top_sites)} top-layer site(s) are available. Placing {placed_count}."
         )
 
-    template = _oriented_linker_coords(
-        linker_coords,
-        np.array([0.0, 0.0, -1.0]),
-        protein_index=protein_bead_index,
-        surface_index=surface_bead_index,
-    )
+    if len(linker_coords) == 1:
+        # A single-bead linker has no orientation axis. Place it directly
+        # above the selected surface site instead of requiring two ends.
+        template = np.zeros_like(linker_coords)
+    else:
+        template = _oriented_linker_coords(
+            linker_coords,
+            np.array([0.0, 0.0, -1.0]),
+            protein_index=protein_bead_index,
+            surface_index=surface_bead_index,
+        )
     site_order = np.random.permutation(len(top_sites))[:placed_count]
 
     for site_idx in site_order:
