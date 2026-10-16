@@ -812,7 +812,13 @@ def _render_linker_generator() -> None:
                         itp_path = Path(st.session_state.generated_linker_itp_path)
                         selected = st.session_state.linker_charged_bead
                         bead_index = int(str(selected).split(":", 1)[0])
+                        previous = st.session_state.get("_linker_previous_charge_bead")
+                        previous_path = st.session_state.get("_linker_previous_charge_itp")
+                        if previous is not None and previous != bead_index and previous_path == str(itp_path):
+                            assign_linker_bead_charge(itp_path, int(previous), 0)
                         net = assign_linker_bead_charge(itp_path, bead_index, int(st.session_state.linker_net_charge))
+                        st.session_state._linker_previous_charge_bead = bead_index
+                        st.session_state._linker_previous_charge_itp = str(itp_path)
                         st.success(f"Updated {itp_path.name}; resulting linker charge: {net:+g} e.")
                     except (ValueError, OSError) as exc:
                         st.error(f"Could not update linker charge: {exc}")
